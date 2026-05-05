@@ -150,6 +150,20 @@ async def health():
     return {"status": "ok", "service": "cambodian-legal-rag", "provider": DEFAULT_LLM_PROVIDER}
 
 
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "service": "cambodian-legal-rag",
+        "provider": DEFAULT_LLM_PROVIDER,
+        "endpoints": {
+            "health": "/health",
+            "chat": "/chat",
+            "docs": "/docs",
+        },
+    }
+
+
 @app.get("/health")
 async def root_health():
     return await health()
@@ -192,6 +206,11 @@ async def chat_endpoint(req: RagChatRequest):
 
     citations = [_chunk_to_citation(chunk) for chunk in chunks]
     return RagChatResponse(chatId=chat_id, answer=answer, citations=citations)
+
+
+@app.post("/api/chat", response_model=RagChatResponse)
+async def api_chat_endpoint(req: RagChatRequest):
+    return await chat_endpoint(req)
 
 
 @app.post("/api/query", response_model=QueryResponse)
