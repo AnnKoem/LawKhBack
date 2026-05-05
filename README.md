@@ -108,7 +108,7 @@ TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 
 ## ChromaDB
 
-This repo includes the Chroma database under:
+This repo includes the packaged Chroma database under:
 
 ```txt
 rag/chroma_db/
@@ -116,16 +116,30 @@ rag/chroma_db/
 
 The folder contains `chroma.sqlite3` and the related Chroma index files for the `cambodian_laws` collection. These large files are stored with Git LFS.
 
+At runtime, the backend copies the packaged database into:
+
+```txt
+.runtime/chroma_db/
+```
+
+The runtime copy is ignored by git. This keeps the committed database clean while allowing Chroma/SQLite to create temporary journal files locally.
+
 Default collection name:
 
 ```txt
 cambodian_laws
 ```
 
-If you want to use a different database, set `CHROMA_DIR` in `.env`:
+If you want to use a different packaged database, set `CHROMA_SOURCE_DIR` in `.env`:
 
 ```txt
-CHROMA_DIR=D:\path\to\your\chroma_db
+CHROMA_SOURCE_DIR=D:\path\to\your\chroma_db
+```
+
+If you want to bypass the runtime copy and point Chroma directly at a database, set `CHROMA_DIR`:
+
+```txt
+CHROMA_DIR=D:\path\to\your\runtime_chroma_db
 ```
 
 ## Run Locally
@@ -173,7 +187,8 @@ RUN_TELEGRAM_BOT=true
 RAG_API_BASE_URL=http://localhost:8000
 RAG_REQUEST_TIMEOUT_SECONDS=60
 
-CHROMA_DIR=rag/chroma_db
+CHROMA_SOURCE_DIR=rag/chroma_db
+CHROMA_DIR=
 CHROMA_COLLECTION_NAME=cambodian_laws
 EMBEDDING_MODEL=intfloat/multilingual-e5-large
 

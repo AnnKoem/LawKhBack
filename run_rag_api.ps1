@@ -26,19 +26,19 @@ if (-not $env:OLLAMA_MODEL) {
   $env:OLLAMA_MODEL = "gpt-oss:20b"
 }
 
-if (-not $env:CHROMA_DIR) {
+if (-not $env:CHROMA_SOURCE_DIR) {
   $default = Join-Path $PSScriptRoot "rag\chroma_db"
   $active = Join-Path $PSScriptRoot "rag\chroma_db_active"
   $fresh = Join-Path $PSScriptRoot "rag\chroma_db_active_fresh\chroma_db"
 
   if (Test-Path (Join-Path $default "chroma.sqlite3")) {
-    $env:CHROMA_DIR = $default
+    $env:CHROMA_SOURCE_DIR = $default
   } elseif (Test-Path (Join-Path $active "chroma.sqlite3")) {
-    $env:CHROMA_DIR = $active
+    $env:CHROMA_SOURCE_DIR = $active
   } elseif (Test-Path (Join-Path $fresh "chroma.sqlite3")) {
-    $env:CHROMA_DIR = $fresh
+    $env:CHROMA_SOURCE_DIR = $fresh
   } else {
-    $env:CHROMA_DIR = $default
+    $env:CHROMA_SOURCE_DIR = $default
   }
 }
 
@@ -61,7 +61,12 @@ if ($env:LLM_PROVIDER -eq "openrouter") {
 } else {
   Write-Host "  Model     : $env:OLLAMA_MODEL"
 }
-Write-Host "  Chroma DB : $env:CHROMA_DIR"
+Write-Host "  Chroma source : $env:CHROMA_SOURCE_DIR"
+if ($env:CHROMA_DIR) {
+  Write-Host "  Chroma runtime: $env:CHROMA_DIR"
+} else {
+  Write-Host "  Chroma runtime: .runtime\chroma_db"
+}
 Write-Host "  URL       : http://localhost:8000"
 Write-Host ""
 

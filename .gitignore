@@ -8,3 +8,6 @@ __pycache__/
 venv/
 *_stdout.log
 *_stderr.log
+.runtime/
+.runtime_*/
+test_write.sqlite3
