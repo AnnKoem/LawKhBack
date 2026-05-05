@@ -48,6 +48,7 @@ LawKhBack/
     bot.py
     api_client.py
     config.py
+  .runtime/          (gitignored, created at startup)
 ```
 
 Important paths:
@@ -308,18 +309,6 @@ telegram_bot_stderr.log
 ```
 
 These log files are ignored by git.
-
-## Local Hosting Notes
-
-This repo is intended for local hosting or a normal server host where local files can persist.
-
-It is not currently a clean Vercel deployment target because it depends on:
-
-- local ChromaDB files
-- local embedding model loading
-- local persistent vector storage
-
-For Vercel, the retrieval layer would need to move to hosted embeddings and a hosted vector database.
 
 ## Git Notes
 
