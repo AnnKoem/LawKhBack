@@ -48,6 +48,7 @@ LawKhBack/
     bot.py
     api_client.py
     config.py
+  .runtime/          (gitignored, created at startup)
 ```
 
 Important paths:
@@ -60,7 +61,7 @@ Important paths:
 ## Requirements
 
 - Python 3.10 or newer
-- A local ChromaDB folder for the `cambodian_laws` collection
+- Git LFS, used for the included ChromaDB files
 - Ollama running locally with `gpt-oss:20b`
 - Telegram bot token if using the Telegram interface
 
@@ -69,8 +70,10 @@ Important paths:
 Clone the repository and enter the project folder:
 
 ```powershell
+git lfs install
 git clone <your-repo-url>
 cd LawKhBack
+git lfs pull
 ```
 
 Create a virtual environment:
@@ -105,15 +108,23 @@ If using Telegram, also set:
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 ```
 
-## Attach ChromaDB
+## ChromaDB
 
-Place the Chroma database files inside:
+This repo includes the packaged Chroma database under:
 
 ```txt
 rag/chroma_db/
 ```
 
-The folder should contain `chroma.sqlite3` and the related Chroma index files.
+The folder contains `chroma.sqlite3` and the related Chroma index files for the `cambodian_laws` collection. These large files are stored with Git LFS.
+
+At runtime, the backend copies the packaged database into:
+
+```txt
+.runtime/chroma_db/
+```
+
+The runtime copy is ignored by git. This keeps the committed database clean while allowing Chroma/SQLite to create temporary journal files locally.
 
 Default collection name:
 
@@ -121,10 +132,16 @@ Default collection name:
 cambodian_laws
 ```
 
-If your database lives somewhere else, set `CHROMA_DIR` in `.env`:
+If you want to use a different packaged database, set `CHROMA_SOURCE_DIR` in `.env`:
 
 ```txt
-CHROMA_DIR=D:\path\to\your\chroma_db
+CHROMA_SOURCE_DIR=D:\path\to\your\chroma_db
+```
+
+If you want to bypass the runtime copy and point Chroma directly at a database, set `CHROMA_DIR`:
+
+```txt
+CHROMA_DIR=D:\path\to\your\runtime_chroma_db
 ```
 
 ## Run Locally
@@ -172,7 +189,8 @@ RUN_TELEGRAM_BOT=true
 RAG_API_BASE_URL=http://localhost:8000
 RAG_REQUEST_TIMEOUT_SECONDS=60
 
-CHROMA_DIR=rag/chroma_db
+CHROMA_SOURCE_DIR=rag/chroma_db
+CHROMA_DIR=
 CHROMA_COLLECTION_NAME=cambodian_laws
 EMBEDDING_MODEL=intfloat/multilingual-e5-large
 
@@ -293,20 +311,8 @@ telegram_bot_stderr.log
 
 These log files are ignored by git.
 
-## Local Hosting Notes
-
-This repo is intended for local hosting or a normal server host where local files can persist.
-
-It is not currently a clean Vercel deployment target because it depends on:
-
-- local ChromaDB files
-- local embedding model loading
-- local persistent vector storage
-
-For Vercel, the retrieval layer would need to move to hosted embeddings and a hosted vector database.
-
 ## Git Notes
 
 Do not commit `.env`.
 
-The repository includes `rag/chroma_db/.gitkeep` so the Chroma folder exists in fresh clones. If you want the Chroma database to travel with the repo, commit the actual Chroma DB files under `rag/chroma_db/`.
+The Chroma DB files are intentionally committed through Git LFS so a clone can run local RAG without receiving the database through a separate channel.

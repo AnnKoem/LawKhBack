@@ -25,17 +25,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from query import (
-    DEFAULT_LLM_PROVIDER,
-    DEFAULT_MODEL,
-    DEFAULT_OPENROUTER_MODEL,
-    generate_answer,
-    generate_answer_stream,
-    generate_answer_with_review,
-    generate_chat_answer,
-    query_law,
-    should_self_check,
-)
+try:
+    from query import (
+        DEFAULT_LLM_PROVIDER,
+        DEFAULT_MODEL,
+        DEFAULT_OPENROUTER_MODEL,
+        generate_answer,
+        generate_answer_stream,
+        generate_answer_with_review,
+        generate_chat_answer,
+        query_law,
+        should_self_check,
+    )
+except ModuleNotFoundError:
+    from .query import (
+        DEFAULT_LLM_PROVIDER,
+        DEFAULT_MODEL,
+        DEFAULT_OPENROUTER_MODEL,
+        generate_answer,
+        generate_answer_stream,
+        generate_answer_with_review,
+        generate_chat_answer,
+        query_law,
+        should_self_check,
+    )
 
 app = FastAPI(
     title="Cambodian Legal Assistant",
@@ -177,7 +190,7 @@ async def chat_endpoint(req: RagChatRequest):
     try:
         chunks = query_law(
             req.question,
-            language="kh",
+            language="all",
             top_k=7,
             category_ids=filters.categoryIds,
             document_ids=filters.documentIds,
