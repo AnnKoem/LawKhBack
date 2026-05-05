@@ -33,7 +33,7 @@ CHROMA_DIR = os.getenv(
 )
 COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "cambodian_laws")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
-DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
+DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 DEFAULT_OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 DEFAULT_OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -275,7 +275,7 @@ def _build_chat_prompt(question: str, chunks: list[dict], history: list[dict] | 
 
 
 def _resolve_provider(provider: str | None = None) -> str:
-    selected = (provider or DEFAULT_LLM_PROVIDER or "openrouter").strip().lower()
+    selected = (provider or DEFAULT_LLM_PROVIDER or "ollama").strip().lower()
     if selected not in {"openrouter", "ollama"}:
         raise ValueError(f"Unsupported LLM provider: {selected}")
     return selected

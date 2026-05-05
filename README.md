@@ -2,11 +2,11 @@
 
 Local-first backend for a Cambodian law assistant app.
 
-This repository runs the backend API used by the Expo mobile app and the Telegram bot interface. It uses local ChromaDB retrieval, local sentence-transformer embeddings, and OpenRouter for answer generation by default.
+This repository runs the backend API used by the Expo mobile app and the Telegram bot interface. This branch uses local ChromaDB retrieval, local sentence-transformer embeddings, and Ollama `gpt-oss:20b` for answer generation by default.
 
 ## Overview
 
-LawKhBack is designed for a local demo or a normal server host where the Chroma database can live beside the backend. The API accepts legal questions, retrieves relevant Cambodian law chunks from ChromaDB, sends the retrieved context to an OpenRouter model, and returns an answer with structured citations.
+LawKhBack is designed for a local demo or a normal server host where the Chroma database can live beside the backend. The API accepts legal questions, retrieves relevant Cambodian law chunks from ChromaDB, sends the retrieved context to Ollama `gpt-oss:20b`, and returns an answer with structured citations.
 
 Supported clients:
 
@@ -14,11 +14,11 @@ Supported clients:
 - Telegram bot
 - Direct HTTP requests to the backend API
 
-Default model provider:
+Default model provider on this branch:
 
 ```txt
-LLM_PROVIDER=openrouter
-OPENROUTER_MODEL=openrouter/free
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=gpt-oss:20b
 ```
 
 ## Architecture
@@ -28,7 +28,7 @@ Expo app / Telegram bot
   -> FastAPI backend
     -> local ChromaDB
     -> local sentence-transformers embedding model
-    -> OpenRouter chat completion API
+    -> Ollama gpt-oss:20b chat API
     -> answer + citations
 ```
 
@@ -53,7 +53,7 @@ LawKhBack/
 Important paths:
 
 - `rag/server.py` contains the FastAPI endpoints.
-- `rag/query.py` contains retrieval, prompt building, OpenRouter/Ollama provider switching, and self-check logic.
+- `rag/query.py` contains retrieval, prompt building, Ollama/OpenRouter provider switching, and self-check logic.
 - `rag/chroma_db/` is where the local Chroma database should be placed.
 - `telegram_bot/` contains the Telegram polling bot that calls the same `/chat` backend endpoint.
 
@@ -61,7 +61,7 @@ Important paths:
 
 - Python 3.10 or newer
 - A local ChromaDB folder for the `cambodian_laws` collection
-- OpenRouter API key
+- Ollama running locally with `gpt-oss:20b`
 - Telegram bot token if using the Telegram interface
 
 ## Setup
@@ -92,10 +92,11 @@ Create your local environment file:
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set at least:
+Make sure Ollama is running and the model is available:
 
-```txt
-OPENROUTER_API_KEY=your_openrouter_api_key
+```powershell
+ollama serve
+ollama pull gpt-oss:20b
 ```
 
 If using Telegram, also set:
@@ -151,7 +152,7 @@ Expected response:
 {
   "status": "ok",
   "service": "cambodian-legal-rag",
-  "provider": "openrouter"
+  "provider": "ollama"
 }
 ```
 
@@ -160,7 +161,7 @@ Expected response:
 Default `.env` shape:
 
 ```txt
-LLM_PROVIDER=openrouter
+LLM_PROVIDER=ollama
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=openrouter/free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
@@ -185,12 +186,12 @@ To run only the backend without Telegram:
 RUN_TELEGRAM_BOT=false
 ```
 
-To switch generation to Ollama:
+To switch generation back to OpenRouter:
 
 ```txt
-LLM_PROVIDER=ollama
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=gpt-oss:20b
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=openrouter/free
 ```
 
 ## API
@@ -266,7 +267,7 @@ The Expo app should call:
 POST /chat
 ```
 
-The OpenRouter key and Telegram token stay in this backend repo's `.env`, not inside the APK.
+The Telegram token and any provider keys stay in this backend repo's `.env`, not inside the APK.
 
 ## Telegram Bot Usage
 

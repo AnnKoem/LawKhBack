@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $env:PYTHONIOENCODING = "utf-8"
 
 if (-not $env:LLM_PROVIDER) {
-  $env:LLM_PROVIDER = "openrouter"
+  $env:LLM_PROVIDER = "ollama"
 }
 
 if (-not $env:OPENROUTER_MODEL) {
