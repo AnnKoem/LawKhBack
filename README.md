@@ -1,0 +1,311 @@
+# LawKhBack
+
+Local-first backend for a Cambodian law assistant app.
+
+This repository runs the backend API used by the Expo mobile app and the Telegram bot interface. It uses local ChromaDB retrieval, local sentence-transformer embeddings, and OpenRouter for answer generation by default.
+
+## Overview
+
+LawKhBack is designed for a local demo or a normal server host where the Chroma database can live beside the backend. The API accepts legal questions, retrieves relevant Cambodian law chunks from ChromaDB, sends the retrieved context to an OpenRouter model, and returns an answer with structured citations.
+
+Supported clients:
+
+- Expo React Native APK / Android emulator
+- Telegram bot
+- Direct HTTP requests to the backend API
+
+Default model provider:
+
+```txt
+LLM_PROVIDER=openrouter
+OPENROUTER_MODEL=openrouter/free
+```
+
+## Architecture
+
+```txt
+Expo app / Telegram bot
+  -> FastAPI backend
+    -> local ChromaDB
+    -> local sentence-transformers embedding model
+    -> OpenRouter chat completion API
+    -> answer + citations
+```
+
+## Repository Layout
+
+```txt
+LawKhBack/
+  README.md
+  .env.example
+  requirements.txt
+  run_rag_api.ps1
+  rag/
+    server.py
+    query.py
+    chroma_db/
+  telegram_bot/
+    bot.py
+    api_client.py
+    config.py
+```
+
+Important paths:
+
+- `rag/server.py` contains the FastAPI endpoints.
+- `rag/query.py` contains retrieval, prompt building, OpenRouter/Ollama provider switching, and self-check logic.
+- `rag/chroma_db/` is where the local Chroma database should be placed.
+- `telegram_bot/` contains the Telegram polling bot that calls the same `/chat` backend endpoint.
+
+## Requirements
+
+- Python 3.10 or newer
+- A local ChromaDB folder for the `cambodian_laws` collection
+- OpenRouter API key
+- Telegram bot token if using the Telegram interface
+
+## Setup
+
+Clone the repository and enter the project folder:
+
+```powershell
+git clone <your-repo-url>
+cd LawKhBack
+```
+
+Create a virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Create your local environment file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and set at least:
+
+```txt
+OPENROUTER_API_KEY=your_openrouter_api_key
+```
+
+If using Telegram, also set:
+
+```txt
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+```
+
+## Attach ChromaDB
+
+Place the Chroma database files inside:
+
+```txt
+rag/chroma_db/
+```
+
+The folder should contain `chroma.sqlite3` and the related Chroma index files.
+
+Default collection name:
+
+```txt
+cambodian_laws
+```
+
+If your database lives somewhere else, set `CHROMA_DIR` in `.env`:
+
+```txt
+CHROMA_DIR=D:\path\to\your\chroma_db
+```
+
+## Run Locally
+
+Start the backend:
+
+```powershell
+.\run_rag_api.ps1
+```
+
+By default this starts:
+
+- FastAPI backend on `http://localhost:8000`
+- Telegram bot in the background when `RUN_TELEGRAM_BOT=true` and `TELEGRAM_BOT_TOKEN` is set
+
+Health check:
+
+```txt
+GET http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "service": "cambodian-legal-rag",
+  "provider": "openrouter"
+}
+```
+
+## Environment Variables
+
+Default `.env` shape:
+
+```txt
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=http://localhost:3000
+OPENROUTER_APP_NAME=Feasible
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+RUN_TELEGRAM_BOT=true
+RAG_API_BASE_URL=http://localhost:8000
+RAG_REQUEST_TIMEOUT_SECONDS=60
+
+CHROMA_DIR=rag/chroma_db
+CHROMA_COLLECTION_NAME=cambodian_laws
+EMBEDDING_MODEL=intfloat/multilingual-e5-large
+
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=gpt-oss:20b
+```
+
+To run only the backend without Telegram:
+
+```txt
+RUN_TELEGRAM_BOT=false
+```
+
+To switch generation to Ollama:
+
+```txt
+LLM_PROVIDER=ollama
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=gpt-oss:20b
+```
+
+## API
+
+### `GET /health`
+
+Returns service status and active provider.
+
+### `POST /chat`
+
+Main endpoint for the Expo app and Telegram bot.
+
+Request:
+
+```json
+{
+  "question": "What are the tax registration requirements for a new company in Cambodia?",
+  "chatId": "chat_optional",
+  "history": [
+    {
+      "role": "user",
+      "content": "I am setting up a company."
+    }
+  ],
+  "filters": {
+    "categoryIds": ["tax", "business-registration"],
+    "documentIds": []
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "chatId": "chat_abc123",
+  "answer": "Generated legal answer...",
+  "citations": [
+    {
+      "id": "cite_001",
+      "title": "Law on Taxation",
+      "fullCitation": "Law on Taxation (Tax)",
+      "documentId": "tax_ocr/example.txt",
+      "categoryId": "tax",
+      "excerpt": "Relevant source excerpt...",
+      "score": 0.82
+    }
+  ]
+}
+```
+
+Other available endpoints:
+
+- `GET /chats`
+- `GET /law/categories`
+- `GET /law/categories/{categoryId}/documents`
+- `GET /law/documents/{documentId}`
+- `GET /citations/{citationId}`
+- `POST /api/query`
+- `POST /api/query/stream`
+
+## Expo App Usage
+
+Use these backend URLs from the Expo app:
+
+- Web on same machine: `http://localhost:8000`
+- Android emulator: `http://10.0.2.2:8000`
+- Physical device: `http://<your-lan-ip>:8000`
+
+The Expo app should call:
+
+```txt
+POST /chat
+```
+
+The OpenRouter key and Telegram token stay in this backend repo's `.env`, not inside the APK.
+
+## Telegram Bot Usage
+
+The Telegram bot is started by `run_rag_api.ps1` when:
+
+```txt
+RUN_TELEGRAM_BOT=true
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+```
+
+The bot uses polling and sends user questions to:
+
+```txt
+http://localhost:8000/chat
+```
+
+Bot logs are written to:
+
+```txt
+telegram_bot_stdout.log
+telegram_bot_stderr.log
+```
+
+These log files are ignored by git.
+
+## Local Hosting Notes
+
+This repo is intended for local hosting or a normal server host where local files can persist.
+
+It is not currently a clean Vercel deployment target because it depends on:
+
+- local ChromaDB files
+- local embedding model loading
+- local persistent vector storage
+
+For Vercel, the retrieval layer would need to move to hosted embeddings and a hosted vector database.
+
+## Git Notes
+
+Do not commit `.env`.
+
+The repository includes `rag/chroma_db/.gitkeep` so the Chroma folder exists in fresh clones. If you want the Chroma database to travel with the repo, commit the actual Chroma DB files under `rag/chroma_db/`.
