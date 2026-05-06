@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
@@ -20,10 +21,32 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, EmailStr, Field
+
+from auth_store import (
+    chats_collection,
+    create_access_token,
+    create_reset_token,
+    decode_access_token,
+    get_user_by_id,
+    hash_password,
+    normalize_email,
+    public_user,
+    reset_password,
+    users_collection,
+    verify_password,
+)
+from law_assets import (
+    build_law_index,
+    get_document,
+    get_document_path,
+    list_categories,
+    list_documents,
+    prepare_assets_from_source,
+)
 
 try:
     from query import (
@@ -137,17 +160,95 @@ class RagChatResponse(BaseModel):
     citations: list[RagCitation]
 
 
-class LawCategory(BaseModel):
+class AuthUser(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    preferences: dict = Field(default_factory=lambda: {"darkMode": True})
+
+
+class AuthResponse(BaseModel):
+    accessToken: str
+    user: AuthUser
+
+
+class SignupRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=1)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    ok: bool
+    resetToken: Optional[str] = None
+    resetUrl: Optional[str] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10)
+    password: str = Field(..., min_length=8)
+
+
+class OkResponse(BaseModel):
+    ok: bool
+
+
+class UpdateProfileRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1)
+    preferences: Optional[dict] = None
+
+
+class ChatSummaryResponse(BaseModel):
     id: str
     title: str
-    sourceCategory: str
+    preview: str
+    updatedAt: str
+
+
+class StoredMessage(BaseModel):
+    id: str
+    role: Literal["user", "assistant"]
+    content: str
+    createdAt: str
+    citations: list[RagCitation] = Field(default_factory=list)
+
+
+class ChatDetailResponse(BaseModel):
+    id: str
+    title: str
+    updatedAt: str
+    messages: list[StoredMessage]
+
+
+class LawCategory(BaseModel):
+    id: str
+    icon: Optional[str] = None
+    name: str
+    description: str
+    documentCount: int
 
 
 class LawDocument(BaseModel):
     id: str
     title: str
     categoryId: str
-    sourceFile: str
+    subtitle: str
+    year: str
+    pages: Optional[int] = None
+    size: Optional[str] = None
+
+
+class LawDocumentDetail(LawDocument):
+    content: str
 
 
 class CitationDetail(RagCitation):
@@ -164,6 +265,28 @@ CATEGORY_LABELS = {
     "CouncilForDevelopmentOfCambodia_ocr": ("investment", "Investment"),
     "RegistrationBusiness_ocr": ("business-registration", "Business Registration"),
 }
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _auth_user_from_header(authorization: str | None) -> dict | None:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = decode_access_token(token)
+    except Exception:
+        return None
+    return get_user_by_id(payload.get("sub", ""))
+
+
+def _require_user(authorization: str | None) -> dict:
+    user = _auth_user_from_header(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or missing access token")
+    return user
 
 
 @app.get("/api/health")
@@ -190,8 +313,99 @@ async def root_health():
     return await health()
 
 
+@app.post("/auth/signup", response_model=AuthResponse)
+async def signup_endpoint(req: SignupRequest):
+    email = normalize_email(req.email)
+    now = datetime.now(timezone.utc)
+    user_doc = {
+        "name": req.name.strip(),
+        "email": email,
+        "passwordHash": hash_password(req.password),
+        "preferences": {"darkMode": True},
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    try:
+        result = users_collection().insert_one(user_doc)
+    except Exception as exc:
+        if "duplicate" in str(exc).lower():
+            raise HTTPException(status_code=409, detail="Email is already registered") from exc
+        raise HTTPException(status_code=503, detail="User database is unavailable") from exc
+    user_doc["_id"] = result.inserted_id
+    return AuthResponse(accessToken=create_access_token(user_doc), user=AuthUser(**public_user(user_doc)))
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login_endpoint(req: LoginRequest):
+    try:
+        user = users_collection().find_one({"email": normalize_email(req.email)})
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="User database is unavailable") from exc
+    if not user or not verify_password(req.password, user.get("passwordHash", "")):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return AuthResponse(accessToken=create_access_token(user), user=AuthUser(**public_user(user)))
+
+
+@app.post("/auth/password/forgot", response_model=ForgotPasswordResponse)
+async def forgot_password_endpoint(req: ForgotPasswordRequest):
+    try:
+        reset = create_reset_token(req.email)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="User database is unavailable") from exc
+    if not reset:
+        return ForgotPasswordResponse(ok=True)
+    return ForgotPasswordResponse(ok=True, resetToken=reset["token"], resetUrl=reset["resetUrl"])
+
+
+@app.post("/auth/password/reset", response_model=OkResponse)
+async def reset_password_endpoint(req: ResetPasswordRequest):
+    try:
+        ok = reset_password(req.token, req.password)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="User database is unavailable") from exc
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    return OkResponse(ok=True)
+
+
+@app.get("/auth/me", response_model=AuthUser)
+async def auth_me_endpoint(authorization: Optional[str] = Header(default=None)):
+    return AuthUser(**public_user(_require_user(authorization)))
+
+
+@app.get("/me", response_model=AuthUser)
+async def me_endpoint(authorization: Optional[str] = Header(default=None)):
+    return await auth_me_endpoint(authorization)
+
+
+@app.patch("/auth/me", response_model=AuthUser)
+async def update_me_endpoint(req: UpdateProfileRequest, authorization: Optional[str] = Header(default=None)):
+    user = _require_user(authorization)
+    update: dict = {"updatedAt": datetime.now(timezone.utc)}
+    if req.name is not None:
+        update["name"] = req.name.strip()
+    if req.preferences is not None:
+        update["preferences"] = req.preferences
+    try:
+        users_collection().update_one({"_id": user["_id"]}, {"$set": update})
+        updated = users_collection().find_one({"_id": user["_id"]})
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="User database is unavailable") from exc
+    return AuthUser(**public_user(updated))
+
+
+@app.patch("/me", response_model=AuthUser)
+async def update_me_alias_endpoint(req: UpdateProfileRequest, authorization: Optional[str] = Header(default=None)):
+    return await update_me_endpoint(req, authorization)
+
+
+@app.post("/auth/logout", response_model=OkResponse)
+async def logout_endpoint():
+    return OkResponse(ok=True)
+
+
 @app.post("/chat", response_model=RagChatResponse)
-async def chat_endpoint(req: RagChatRequest):
+async def chat_endpoint(req: RagChatRequest, authorization: Optional[str] = Header(default=None)):
     filters = req.filters or RagFilters()
     chat_id = req.chatId or f"chat_{uuid.uuid4().hex[:12]}"
 
@@ -226,12 +440,17 @@ async def chat_endpoint(req: RagChatRequest):
         raise HTTPException(status_code=502, detail=f"Generation failed with provider '{DEFAULT_LLM_PROVIDER}': {exc}") from exc
 
     citations = [_chunk_to_citation(chunk) for chunk in chunks]
+    user = _auth_user_from_header(authorization)
+    try:
+        _store_chat_turn(chat_id, req.question, answer, citations, user_id=str(user["_id"]) if user else None)
+    except Exception as exc:
+        print(f"[chat] failed to persist chat history: {exc}", file=sys.stderr)
     return RagChatResponse(chatId=chat_id, answer=answer, citations=citations)
 
 
 @app.post("/api/chat", response_model=RagChatResponse)
-async def api_chat_endpoint(req: RagChatRequest):
-    return await chat_endpoint(req)
+async def api_chat_endpoint(req: RagChatRequest, authorization: Optional[str] = Header(default=None)):
+    return await chat_endpoint(req, authorization)
 
 
 @app.post("/api/query", response_model=QueryResponse)
@@ -281,74 +500,85 @@ async def query_endpoint(req: QueryRequest):
     )
 
 
-@app.get("/chats")
-async def chats_endpoint():
-    return []
+@app.get("/chats", response_model=list[ChatSummaryResponse])
+async def chats_endpoint(authorization: Optional[str] = Header(default=None)):
+    user = _auth_user_from_header(authorization)
+    query = {"userId": str(user["_id"])} if user else {}
+    try:
+        docs = chats_collection().find(query).sort("updatedAt", -1).limit(100)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Chat history database is unavailable") from exc
+    return [
+        ChatSummaryResponse(
+            id=doc["id"],
+            title=doc.get("title", "New Chat"),
+            preview=doc.get("preview", ""),
+            updatedAt=_mongo_dt_to_iso(doc.get("updatedAt")),
+        )
+        for doc in docs
+    ]
+
+
+@app.get("/chats/{chat_id}", response_model=ChatDetailResponse)
+async def chat_detail_endpoint(chat_id: str, authorization: Optional[str] = Header(default=None)):
+    user = _auth_user_from_header(authorization)
+    query = {"id": chat_id}
+    if user:
+        query["userId"] = str(user["_id"])
+    try:
+        doc = chats_collection().find_one(query)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Chat history database is unavailable") from exc
+    if not doc:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return ChatDetailResponse(
+        id=doc["id"],
+        title=doc.get("title", "New Chat"),
+        updatedAt=_mongo_dt_to_iso(doc.get("updatedAt")),
+        messages=[
+            StoredMessage(
+                id=message["id"],
+                role=message["role"],
+                content=message["content"],
+                createdAt=_mongo_dt_to_iso(message.get("createdAt")),
+                citations=[RagCitation(**citation) for citation in message.get("citations", [])],
+            )
+            for message in doc.get("messages", [])
+        ],
+    )
 
 
 @app.get("/law/categories", response_model=list[LawCategory])
 async def law_categories_endpoint():
-    return [
-        LawCategory(id=frontend_id, title=title, sourceCategory=source)
-        for source, (frontend_id, title) in CATEGORY_LABELS.items()
-    ]
+    return [LawCategory(**category) for category in list_categories()]
 
 
 @app.get("/law/categories/{category_id}/documents", response_model=list[LawDocument])
 async def law_category_documents_endpoint(category_id: str):
-    source_categories = _frontend_category_to_sources(category_id)
-    try:
-        from query import _get_collection
-
-        data = _get_collection().get(include=["metadatas"], limit=20000)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Document metadata lookup failed: {exc}") from exc
-
-    docs: dict[str, LawDocument] = {}
-    for meta in data.get("metadatas", []):
-        if not meta:
-            continue
-        source_category = meta.get("category", "")
-        if source_categories and source_category not in source_categories:
-            continue
-        doc_id = meta.get("doc_id", "")
-        if not doc_id or doc_id in docs:
-            continue
-        frontend_cat, _title = CATEGORY_LABELS.get(source_category, (source_category, source_category))
-        docs[doc_id] = LawDocument(
-            id=doc_id,
-            title=_title_from_source(meta.get("source_file", doc_id)),
-            categoryId=frontend_cat,
-            sourceFile=meta.get("source_file", doc_id),
-        )
-    return sorted(docs.values(), key=lambda doc: doc.title)
+    return [LawDocument(**doc) for doc in list_documents(category_id)]
 
 
-@app.get("/law/documents/{document_id:path}")
-async def law_document_endpoint(document_id: str):
-    try:
-        from query import _get_collection
-
-        data = _get_collection().get(where={"doc_id": document_id}, include=["documents", "metadatas"], limit=2000)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Document lookup failed: {exc}") from exc
-
-    documents = data.get("documents", [])
-    metadatas = data.get("metadatas", [])
-    if not documents:
+@app.get("/law/documents/{document_id:path}/download")
+async def law_document_download_endpoint(document_id: str):
+    path = get_document_path(document_id)
+    if not path:
         raise HTTPException(status_code=404, detail="Document not found")
+    return FileResponse(path, filename=path.name)
 
-    meta = metadatas[0] if metadatas else {}
-    return {
-        "id": document_id,
-        "title": _title_from_source(meta.get("source_file", document_id)),
-        "categoryId": CATEGORY_LABELS.get(meta.get("category", ""), (meta.get("category", ""), ""))[0],
-        "sourceFile": meta.get("source_file", document_id),
-        "chunks": [
-            {"index": item_meta.get("chunk_index", index) if item_meta else index, "text": text}
-            for index, (text, item_meta) in enumerate(zip(documents, metadatas))
-        ],
-    }
+
+@app.get("/law/documents/{document_id:path}", response_model=LawDocumentDetail)
+async def law_document_endpoint(document_id: str):
+    doc = get_document(document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return LawDocumentDetail(**doc)
+
+
+@app.post("/admin/law-assets/prepare")
+async def prepare_law_assets_endpoint():
+    prepared = await asyncio.to_thread(prepare_assets_from_source)
+    index = await asyncio.to_thread(build_law_index)
+    return {"ok": True, **prepared, "documentCount": len(index.get("documents", []))}
 
 
 @app.get("/citations/{citation_id}", response_model=CitationDetail)
@@ -437,6 +667,55 @@ def _chunk_to_citation(chunk: dict) -> RagCitation:
     )
     _CITATION_CACHE[citation_id] = detail
     return RagCitation(**detail.model_dump(exclude={"text"}))
+
+
+def _mongo_dt_to_iso(value) -> str:
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    if isinstance(value, str):
+        return value
+    return _utc_now_iso()
+
+
+def _store_chat_turn(
+    chat_id: str,
+    question: str,
+    answer: str,
+    citations: list[RagCitation],
+    user_id: str | None = None,
+) -> None:
+    now = datetime.now(timezone.utc)
+    user_message = {
+        "id": f"msg_{uuid.uuid4().hex[:12]}",
+        "role": "user",
+        "content": question,
+        "createdAt": now,
+        "citations": [],
+    }
+    assistant_message = {
+        "id": f"msg_{uuid.uuid4().hex[:12]}",
+        "role": "assistant",
+        "content": answer,
+        "createdAt": now,
+        "citations": [citation.model_dump() for citation in citations],
+    }
+    title = _clean_excerpt(question, max_len=72)
+    preview = _clean_excerpt(answer, max_len=160)
+    insert_fields = {
+        "id": chat_id,
+        "title": title,
+        "createdAt": now,
+    }
+
+    update = {
+        "$setOnInsert": insert_fields,
+        "$set": {"preview": preview, "updatedAt": now},
+        "$push": {"messages": {"$each": [user_message, assistant_message]}},
+    }
+    if user_id:
+        update["$set"]["userId"] = user_id
+    chats_collection().update_one({"id": chat_id}, update, upsert=True)
 
 
 def _title_from_source(source: str) -> str:

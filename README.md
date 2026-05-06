@@ -52,6 +52,13 @@ LawKhBack/
     server.py
     query.py
     chroma_db/
+    auth_store.py
+    law_assets.py
+  scripts/
+    prepare_law_assets.py
+  law_assets/
+    library/       (gitignored, generated locally)
+    index/         (gitignored, generated locally)
   telegram_bot/
     bot.py
     api_client.py
@@ -64,6 +71,7 @@ Important paths:
 - `rag/server.py` contains the FastAPI endpoints.
 - `rag/query.py` contains retrieval, prompt building, OpenRouter/DeepSeek/Ollama provider switching, and self-check logic.
 - `rag/chroma_db/` is where the local Chroma database should be placed.
+- `scripts/prepare_law_assets.py` prepares source law ZIP/material folders for the law library API.
 - `telegram_bot/` contains the Telegram polling bot that calls the same `/chat` backend endpoint.
 
 ## Requirements
@@ -71,6 +79,7 @@ Important paths:
 - Python 3.10 or newer
 - Git LFS, used for the included ChromaDB files
 - OpenRouter API key or DeepSeek API key, depending on provider
+- MongoDB Atlas URI for signup, login, password reset, and saved chat history
 - Telegram bot token if using the Telegram interface
 
 ## Setup
@@ -120,6 +129,42 @@ If using Telegram, also set:
 ```txt
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 ```
+
+For auth and saved chat history, set:
+
+```txt
+MONGODB_URI=your_mongodb_connection_string
+MONGODB_DB=lawkh
+JWT_SECRET=replace_this_with_a_long_random_secret
+```
+
+If Atlas rejects local connections, check the Atlas Network Access IP allowlist first. The backend uses MongoDB for auth and chat history; without a reachable Mongo URI, `/chat` still works but auth/history endpoints cannot persist data.
+
+## Law Documents
+
+The law document ZIPs/source folders are intentionally not committed. Keep them outside git, then prepare them into the local gitignored library.
+
+Set this in `.env`:
+
+```txt
+LAW_ASSETS_SOURCE_DIR=D:\Users\aykay\SProjects\KhmerOCR\Original Materials
+LAW_ASSETS_DIR=law_assets/library
+LAW_ASSETS_INDEX=law_assets/index/documents.json
+```
+
+Prepare the law library:
+
+```powershell
+python -B scripts\prepare_law_assets.py
+```
+
+Expected output includes:
+
+```txt
+Indexed 1189 documents
+```
+
+The preparation step copies/extracts documents into short local filenames so Windows long paths do not break testing. Generated files stay ignored by git.
 
 ## ChromaDB
 
@@ -207,6 +252,17 @@ RUN_TELEGRAM_BOT=true
 RAG_API_BASE_URL=http://localhost:8000
 RAG_REQUEST_TIMEOUT_SECONDS=60
 
+MONGODB_URI=mongodb+srv://username:password@cluster.example.mongodb.net/
+MONGODB_DB=lawkh
+MONGODB_TIMEOUT_MS=5000
+JWT_SECRET=change_this_for_local_dev
+JWT_ACCESS_TOKEN_MINUTES=1440
+PASSWORD_RESET_TOKEN_MINUTES=30
+
+LAW_ASSETS_DIR=law_assets/library
+LAW_ASSETS_INDEX=law_assets/index/documents.json
+LAW_ASSETS_SOURCE_DIR=D:\path\to\Original Materials
+
 CHROMA_SOURCE_DIR=rag/chroma_db
 CHROMA_DIR=
 CHROMA_COLLECTION_NAME=cambodian_laws
@@ -256,6 +312,8 @@ Returns service status and active provider.
 
 Main endpoint for the Expo app and Telegram bot.
 
+This endpoint is public. If the client sends `Authorization: Bearer <token>`, the backend attempts to save the turn under that user. If no token is sent, RAG answer generation still works.
+
 Request:
 
 ```json
@@ -297,13 +355,53 @@ Response:
 
 Other available endpoints:
 
+- `POST /auth/signup`
+- `POST /auth/login`
+- `POST /auth/password/forgot`
+- `POST /auth/password/reset`
+- `GET /auth/me`
+- `PATCH /auth/me`
+- `GET /me`
+- `PATCH /me`
 - `GET /chats`
+- `GET /chats/{chatId}`
 - `GET /law/categories`
 - `GET /law/categories/{categoryId}/documents`
 - `GET /law/documents/{documentId}`
+- `GET /law/documents/{documentId}/download`
 - `GET /citations/{citationId}`
 - `POST /api/query`
 - `POST /api/query/stream`
+
+### Auth Flow
+
+Signup request:
+
+```json
+{
+  "name": "User Name",
+  "email": "user@example.com",
+  "password": "Password123!"
+}
+```
+
+Signup/login response:
+
+```json
+{
+  "accessToken": "jwt_token",
+  "user": {
+    "id": "mongo_user_id",
+    "name": "User Name",
+    "email": "user@example.com",
+    "preferences": {
+      "darkMode": true
+    }
+  }
+}
+```
+
+Forgot password is intentionally simple for the MVP. `POST /auth/password/forgot` returns a reset token directly when the email exists, then `POST /auth/password/reset` changes the password with that token.
 
 ## Expo App Usage
 
@@ -336,6 +434,8 @@ The bot uses polling and sends user questions to:
 http://localhost:8000/chat
 ```
 
+Only one polling instance can use the same Telegram bot token at a time. The startup script skips creating a duplicate local `bot.py` process, but Telegram will still return a `409 Conflict` if the same token is already running from another machine or hosting service.
+
 Bot logs are written to:
 
 ```txt
@@ -350,3 +450,5 @@ These log files are ignored by git.
 Do not commit `.env`.
 
 The Chroma DB files are intentionally committed through Git LFS so a clone can run local RAG without receiving the database through a separate channel.
+
+Do not commit law document ZIPs or generated law library files. The source ZIP/material folder should be prepared locally with `python -B scripts\prepare_law_assets.py`; generated `law_assets/library/` and `law_assets/index/` are gitignored.

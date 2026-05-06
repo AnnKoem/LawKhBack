@@ -101,15 +101,26 @@ Write-Host ""
 
 if ($env:RUN_TELEGRAM_BOT -eq "true") {
   if ($env:TELEGRAM_BOT_TOKEN) {
-    Write-Host "Starting Telegram bot"
-    Write-Host "  Backend   : $env:RAG_API_BASE_URL"
-    Write-Host ""
-    Start-Process -FilePath "python" `
-      -ArgumentList "bot.py" `
-      -WorkingDirectory (Join-Path $PSScriptRoot "telegram_bot") `
-      -WindowStyle Hidden `
-      -RedirectStandardOutput (Join-Path $PSScriptRoot "telegram_bot_stdout.log") `
-      -RedirectStandardError (Join-Path $PSScriptRoot "telegram_bot_stderr.log") | Out-Null
+    $botWorkDir = Join-Path $PSScriptRoot "telegram_bot"
+    $existingBot = Get-CimInstance Win32_Process | Where-Object {
+      $_.Name -like "python*" -and
+      $_.CommandLine -like "*bot.py*"
+    }
+
+    if ($existingBot) {
+      Write-Host "Telegram bot already appears to be running for this repo; skipping duplicate startup."
+      Write-Host ""
+    } else {
+      Write-Host "Starting Telegram bot"
+      Write-Host "  Backend   : $env:RAG_API_BASE_URL"
+      Write-Host ""
+      Start-Process -FilePath "python" `
+        -ArgumentList "bot.py" `
+        -WorkingDirectory $botWorkDir `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $PSScriptRoot "telegram_bot_stdout.log") `
+        -RedirectStandardError (Join-Path $PSScriptRoot "telegram_bot_stderr.log") | Out-Null
+    }
   } else {
     Write-Host "Skipping Telegram bot startup because TELEGRAM_BOT_TOKEN is not set."
     Write-Host ""

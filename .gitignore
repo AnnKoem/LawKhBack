@@ -12,3 +12,8 @@ venv/
 .runtime_*/
 .commandcode/
 test_write.sqlite3
+law_assets/source_zips/
+law_assets/extracted/
+law_assets/library/
+law_assets/**/*.zip
+law_assets/index/
