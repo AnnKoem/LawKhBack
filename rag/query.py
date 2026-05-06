@@ -1,7 +1,7 @@
 """
 Query engine for Cambodian legal RAG system.
-Retrieves relevant law chunks from ChromaDB and generates answers via either
-OpenRouter or Ollama.
+Retrieves relevant law chunks from ChromaDB and generates answers via
+OpenRouter, DeepSeek, or Ollama.
 """
 
 import json
@@ -40,6 +40,9 @@ DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "http://localhost:3000")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Feasible")
+DEFAULT_DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEFAULT_DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 SYSTEM_PROMPT = (
     "You are a legal expert specializing in Cambodian law. "
@@ -314,7 +317,7 @@ def _is_bad_source_text(text: str) -> bool:
 def _infer_category_ids(question: str) -> list[str]:
     lowered = (question or "").lower()
     keyword_map = [
-        (("working hour", "working hours", "overtime", "employee", "employment", "labour", "labor", "wage", "salary"), ["labour"]),
+        (("working hour", "working hours", "working week", "work week", "standard working", "overtime", "employee", "employment", "labour", "labor", "wage", "salary"), ["labour"]),
         (("tax", "vat", "withholding", "income tax", "taxation"), ["tax"]),
         (("bank", "banking", "loan", "credit", "deposit"), ["banking"]),
         (("company registration", "business registration", "register company", "commercial"), ["business-registration"]),
@@ -421,7 +424,7 @@ def _build_chat_prompt(question: str, chunks: list[dict], history: list[dict] | 
 
 def _resolve_provider(provider: str | None = None) -> str:
     selected = (provider or DEFAULT_LLM_PROVIDER or "openrouter").strip().lower()
-    if selected not in {"openrouter", "ollama"}:
+    if selected not in {"openrouter", "deepseek", "ollama"}:
         raise ValueError(f"Unsupported LLM provider: {selected}")
     return selected
 
@@ -497,6 +500,41 @@ def _generate_via_openrouter(
     return content
 
 
+def _generate_via_deepseek(
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+    deepseek_base_url: str,
+) -> str:
+    if not DEEPSEEK_API_KEY:
+        raise ValueError("DEEPSEEK_API_KEY is not set.")
+
+    response = httpx.post(
+        f"{deepseek_base_url.rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": 0,
+            "top_p": 1,
+        },
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise ValueError("DeepSeek returned no choices.")
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if not content:
+        raise ValueError("DeepSeek returned an empty message.")
+    return content
+
+
 def generate_chat_completion(
     system_prompt: str,
     user_prompt: str,
@@ -505,6 +543,7 @@ def generate_chat_completion(
     model: str | None = None,
     ollama_url: str = DEFAULT_OLLAMA_URL,
     openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL,
+    deepseek_base_url: str = DEFAULT_DEEPSEEK_BASE_URL,
     response_format: str | None = None,
 ) -> str:
     selected_provider = _resolve_provider(provider)
@@ -515,6 +554,13 @@ def generate_chat_completion(
             messages,
             model=model or DEFAULT_OPENROUTER_MODEL,
             openrouter_base_url=openrouter_base_url,
+        )
+
+    if selected_provider == "deepseek":
+        return _generate_via_deepseek(
+            messages,
+            model=model or DEFAULT_DEEPSEEK_MODEL,
+            deepseek_base_url=deepseek_base_url,
         )
 
     return _generate_via_ollama(

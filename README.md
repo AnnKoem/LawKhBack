@@ -2,11 +2,11 @@
 
 Local-first backend for a Cambodian law assistant app.
 
-This repository runs the backend API used by the Expo mobile app and the Telegram bot interface. It uses local ChromaDB retrieval, local sentence-transformer embeddings, and OpenRouter for answer generation by default.
+This repository runs the backend API used by the Expo mobile app and the Telegram bot interface. It uses local ChromaDB retrieval, local sentence-transformer embeddings, and a configurable LLM provider for answer generation.
 
 ## Overview
 
-LawKhBack is designed for a local demo or a normal server host where the Chroma database can live beside the backend. The API accepts legal questions, retrieves relevant Cambodian law chunks from ChromaDB, sends the retrieved context to an OpenRouter model, and returns an answer with structured citations.
+LawKhBack is designed for a local demo or a normal server host where the Chroma database can live beside the backend. The API accepts legal questions, retrieves relevant Cambodian law chunks from ChromaDB, sends the retrieved context to the configured model provider, and returns an answer with structured citations.
 
 Supported clients:
 
@@ -21,6 +21,14 @@ LLM_PROVIDER=openrouter
 OPENROUTER_MODEL=openrouter/free
 ```
 
+Supported generation providers:
+
+```txt
+openrouter
+deepseek
+ollama
+```
+
 ## Architecture
 
 ```txt
@@ -28,7 +36,7 @@ Expo app / Telegram bot
   -> FastAPI backend
     -> local ChromaDB
     -> local sentence-transformers embedding model
-    -> OpenRouter chat completion API
+    -> OpenRouter / DeepSeek / Ollama chat completion API
     -> answer + citations
 ```
 
@@ -54,7 +62,7 @@ LawKhBack/
 Important paths:
 
 - `rag/server.py` contains the FastAPI endpoints.
-- `rag/query.py` contains retrieval, prompt building, OpenRouter/Ollama provider switching, and self-check logic.
+- `rag/query.py` contains retrieval, prompt building, OpenRouter/DeepSeek/Ollama provider switching, and self-check logic.
 - `rag/chroma_db/` is where the local Chroma database should be placed.
 - `telegram_bot/` contains the Telegram polling bot that calls the same `/chat` backend endpoint.
 
@@ -62,7 +70,7 @@ Important paths:
 
 - Python 3.10 or newer
 - Git LFS, used for the included ChromaDB files
-- OpenRouter API key
+- OpenRouter API key or DeepSeek API key, depending on provider
 - Telegram bot token if using the Telegram interface
 
 ## Setup
@@ -95,10 +103,16 @@ Create your local environment file:
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set at least:
+Edit `.env` and set at least one provider key:
 
 ```txt
 OPENROUTER_API_KEY=your_openrouter_api_key
+```
+
+or:
+
+```txt
+DEEPSEEK_API_KEY=your_deepseek_api_key
 ```
 
 If using Telegram, also set:
@@ -172,6 +186,8 @@ Expected response:
 }
 ```
 
+The `provider` value follows your `LLM_PROVIDER` setting.
+
 ## Environment Variables
 
 Default `.env` shape:
@@ -183,6 +199,9 @@ OPENROUTER_MODEL=openrouter/free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=http://localhost:3000
 OPENROUTER_APP_NAME=Feasible
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 RUN_TELEGRAM_BOT=true
 RAG_API_BASE_URL=http://localhost:8000
@@ -209,6 +228,22 @@ To switch generation to Ollama:
 LLM_PROVIDER=ollama
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=gpt-oss:20b
+```
+
+To switch generation to DeepSeek:
+
+```txt
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+DeepSeek currently exposes these model IDs through `/models`:
+
+```txt
+deepseek-v4-flash
+deepseek-v4-pro
 ```
 
 ## API
@@ -284,7 +319,7 @@ The Expo app should call:
 POST /chat
 ```
 
-The OpenRouter key and Telegram token stay in this backend repo's `.env`, not inside the APK.
+The OpenRouter/DeepSeek key and Telegram token stay in this backend repo's `.env`, not inside the APK.
 
 ## Telegram Bot Usage
 

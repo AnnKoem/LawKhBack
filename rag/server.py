@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 try:
     from query import (
         DEFAULT_LLM_PROVIDER,
+        DEFAULT_DEEPSEEK_MODEL,
         DEFAULT_MODEL,
         DEFAULT_OPENROUTER_MODEL,
         generate_answer,
@@ -40,6 +41,7 @@ try:
 except ModuleNotFoundError:
     from .query import (
         DEFAULT_LLM_PROVIDER,
+        DEFAULT_DEEPSEEK_MODEL,
         DEFAULT_MODEL,
         DEFAULT_OPENROUTER_MODEL,
         generate_answer,
@@ -69,9 +71,15 @@ class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, description="Legal question")
     language: str = Field(default="all", pattern="^(en|kh|all)$")
     top_k: int = Field(default=5, ge=1, le=20)
-    provider: str = Field(default=DEFAULT_LLM_PROVIDER, pattern="^(ollama|openrouter)$")
+    provider: str = Field(default=DEFAULT_LLM_PROVIDER, pattern="^(ollama|openrouter|deepseek)$")
     ollama_url: str = Field(default="http://localhost:11434")
-    model: str = Field(default=DEFAULT_OPENROUTER_MODEL if DEFAULT_LLM_PROVIDER == "openrouter" else DEFAULT_MODEL)
+    model: str = Field(
+        default=DEFAULT_OPENROUTER_MODEL
+        if DEFAULT_LLM_PROVIDER == "openrouter"
+        else DEFAULT_DEEPSEEK_MODEL
+        if DEFAULT_LLM_PROVIDER == "deepseek"
+        else DEFAULT_MODEL
+    )
     self_check: bool = Field(default=True, description="Review the answer for high-risk questions")
 
 

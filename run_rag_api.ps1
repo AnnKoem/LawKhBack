@@ -75,6 +75,8 @@ Write-Host "Starting Cambodian Legal RAG API"
 Write-Host "  Provider  : $env:LLM_PROVIDER"
 if ($env:LLM_PROVIDER -eq "openrouter") {
   Write-Host "  Model     : $env:OPENROUTER_MODEL"
+} elseif ($env:LLM_PROVIDER -eq "deepseek") {
+  Write-Host "  Model     : $env:DEEPSEEK_MODEL"
 } else {
   Write-Host "  Model     : $env:OLLAMA_MODEL"
 }
@@ -90,6 +92,8 @@ Write-Host ""
 if ($env:LLM_PROVIDER -eq "ollama") {
   Write-Host "Make sure Ollama is running separately:"
   Write-Host "  ollama serve"
+} elseif ($env:LLM_PROVIDER -eq "deepseek") {
+  Write-Host "Make sure DEEPSEEK_API_KEY is set in .env or your shell."
 } else {
   Write-Host "Make sure OPENROUTER_API_KEY is set in .env or your shell."
 }
