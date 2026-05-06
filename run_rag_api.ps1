@@ -2,6 +2,23 @@ $ErrorActionPreference = "Stop"
 
 $env:PYTHONIOENCODING = "utf-8"
 
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+  Get-Content $envFile | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) {
+      return
+    }
+
+    $parts = $line.Split("=", 2)
+    $name = $parts[0].Trim()
+    $value = $parts[1].Trim().Trim('"').Trim("'")
+    if ($name -and -not [Environment]::GetEnvironmentVariable($name, "Process")) {
+      [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+  }
+}
+
 if (-not $env:LLM_PROVIDER) {
   $env:LLM_PROVIDER = "openrouter"
 }
