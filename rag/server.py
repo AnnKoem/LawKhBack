@@ -571,6 +571,21 @@ async def chat_detail_endpoint(chat_id: str, authorization: Optional[str] = Head
     )
 
 
+@app.delete("/chats/{chat_id}", response_model=OkResponse)
+async def delete_chat_endpoint(chat_id: str, authorization: Optional[str] = Header(default=None)):
+    user = _auth_user_from_header(authorization)
+    query = {"id": chat_id}
+    if user:
+        query["userId"] = str(user["_id"])
+    try:
+        result = chats_collection().delete_one(query)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Chat history database is unavailable") from exc
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return OkResponse(ok=True)
+
+
 @app.get("/law/categories", response_model=list[LawCategory])
 async def law_categories_endpoint():
     return [LawCategory(**category) for category in list_categories()]
