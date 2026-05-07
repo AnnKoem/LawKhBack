@@ -220,6 +220,14 @@ By default this starts:
 - FastAPI backend on `http://localhost:8000`
 - Telegram bot in the background when `RUN_TELEGRAM_BOT=true` and `TELEGRAM_BOT_TOKEN` is set
 
+Linux/cloud hosts can start only the web API with:
+
+```bash
+python start_backend.py
+```
+
+The default port is `8000`. If a host sets `PORT`, `start_backend.py` uses that value automatically.
+
 Health check:
 
 ```txt
@@ -272,6 +280,7 @@ CHROMA_SOURCE_DIR=rag/chroma_db
 CHROMA_DIR=
 CHROMA_COLLECTION_NAME=cambodian_laws
 EMBEDDING_MODEL=intfloat/multilingual-e5-large
+RAG_OFFLINE_MODE=false
 
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=gpt-oss:20b
@@ -306,6 +315,45 @@ DeepSeek currently exposes these model IDs through `/models`:
 deepseek-v4-flash
 deepseek-v4-pro
 ```
+
+## Hosting
+
+This backend is better suited to Render, Railway, Fly.io, or a VPS than Vercel because it uses local ChromaDB files, a larger embedding model, and longer-running AI requests.
+
+Recommended simple deployment:
+
+```txt
+Render web service
+  -> start command: python start_backend.py
+  -> port: 8000 or host-provided PORT
+  -> MongoDB Atlas
+  -> DeepSeek or OpenRouter
+  -> packaged ChromaDB from Git LFS
+```
+
+The repo includes:
+
+- `Procfile` for platforms that detect Python web services.
+- `render.yaml` for Render blueprint-style setup.
+- `start_backend.py` for Linux/cloud startup without PowerShell or reload mode.
+
+Required hosting environment variables:
+
+```txt
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_key
+DEEPSEEK_MODEL=deepseek-v4-flash
+MONGODB_URI=your_mongodb_uri
+MONGODB_DB=lawkh
+JWT_SECRET=long_random_secret
+CHROMA_SOURCE_DIR=rag/chroma_db
+CHROMA_COLLECTION_NAME=cambodian_laws
+EMBEDDING_MODEL=intfloat/multilingual-e5-large
+RAG_OFFLINE_MODE=false
+RUN_TELEGRAM_BOT=false
+```
+
+For the hosted API, keep Telegram as a separate worker/service if needed. Do not run the Telegram polling bot inside the web process on most hosts.
 
 ## API
 
