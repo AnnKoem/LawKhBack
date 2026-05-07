@@ -8,6 +8,11 @@ This repository runs the backend API used by the Expo mobile app and the Telegra
 
 LawKhBack is designed for a local demo or a normal server host where the Chroma database can live beside the backend. The API accepts legal questions, retrieves relevant Cambodian law chunks from ChromaDB, sends the retrieved context to the configured model provider, and returns an answer with structured citations.
 
+Submission deliverables:
+
+- [1-Page RAG Tech Report](docs/rag-tech-report.md)
+- [System Diagram](docs/system-diagram.md)
+
 Supported clients:
 
 - Expo React Native APK / Android emulator
