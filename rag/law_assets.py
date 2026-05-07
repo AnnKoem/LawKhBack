@@ -7,6 +7,7 @@ import stat
 import zipfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from dotenv import load_dotenv
 
@@ -264,9 +265,48 @@ def list_documents(category_id: str) -> list[dict[str, Any]]:
     return sorted(docs, key=lambda item: item["title"])
 
 
-def get_document(document_id: str) -> dict[str, Any] | None:
+def normalize_document_id(document_id: str) -> str:
+    return unquote(document_id or "").strip()
+
+
+def find_document(document_id: str) -> dict[str, Any] | None:
+    normalized_id = normalize_document_id(document_id)
     index = load_law_index()
-    doc = next((item for item in index.get("documents", []) if item.get("id") == document_id), None)
+    return next((item for item in index.get("documents", []) if item.get("id") == normalized_id), None)
+
+
+def find_document_for_source(category_id: str, source_file: str = "", doc_id: str = "") -> dict[str, Any] | None:
+    normalized_doc_id = normalize_document_id(doc_id)
+    exact = find_document(normalized_doc_id)
+    if exact:
+        return exact
+
+    index = load_law_index()
+    docs = [
+        doc for doc in index.get("documents", [])
+        if not category_id or doc.get("categoryId") == category_id
+    ]
+    if not docs:
+        return None
+
+    candidates = [_slug(value) for value in (source_file, doc_id, Path(source_file).stem, Path(doc_id).stem) if value]
+    candidates = [value for value in candidates if value]
+    if not candidates:
+        return None
+
+    for doc in docs:
+        searchable = " ".join(
+            _slug(str(doc.get(key, "")))
+            for key in ("id", "title", "relativePath", "sourcePath")
+        )
+        if any(candidate and (candidate in searchable or searchable in candidate) for candidate in candidates):
+            return doc
+
+    return None
+
+
+def get_document(document_id: str) -> dict[str, Any] | None:
+    doc = find_document(document_id)
     if not doc:
         return None
     path = LAW_ASSETS_DIR / doc["sourcePath"]
@@ -282,8 +322,7 @@ def get_document(document_id: str) -> dict[str, Any] | None:
 
 
 def get_document_path(document_id: str) -> Path | None:
-    index = load_law_index()
-    doc = next((item for item in index.get("documents", []) if item.get("id") == document_id), None)
+    doc = find_document(document_id)
     if not doc:
         return None
     path = LAW_ASSETS_DIR / doc["sourcePath"]

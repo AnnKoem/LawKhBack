@@ -344,14 +344,30 @@ Response:
       "id": "cite_001",
       "title": "Law on Taxation",
       "fullCitation": "Law on Taxation (Tax)",
-      "documentId": "tax_ocr/example.txt",
+      "documentId": "tax/law-on-taxation-2023-pdf",
       "categoryId": "tax",
+      "page": null,
       "excerpt": "Relevant source excerpt...",
-      "score": 0.82
+      "score": 0.82,
+      "pdfUrl": "http://localhost:8000/law/documents/tax%2Flaw-on-taxation-2023-pdf/download",
+      "downloadUrl": "http://localhost:8000/law/documents/tax%2Flaw-on-taxation-2023-pdf/download",
+      "chunkId": "123",
+      "locationLabel": "OCR chunk 123"
     }
   ]
 }
 ```
+
+Citation metadata is intentionally source-driven. The backend does not ask the LLM to invent PDF pages. If a real PDF page is unavailable, `page`, `pageStart`, and `pageEnd` are `null`, and `locationLabel` describes the OCR chunk/source location instead.
+
+Citation `documentId` values match the law-library document IDs accepted by:
+
+```txt
+GET /law/documents/{documentId}
+GET /law/documents/{documentId}/download
+```
+
+Document IDs may contain `/`, so frontend clients should URL-encode them before calling document endpoints, for example `tax%2Flaw-on-taxation-2023-pdf`.
 
 Other available endpoints:
 
@@ -402,6 +418,34 @@ Signup/login response:
 ```
 
 Forgot password is intentionally simple for the MVP. `POST /auth/password/forgot` returns a reset token directly when the email exists, then `POST /auth/password/reset` changes the password with that token.
+
+### Law Document Viewer
+
+`GET /law/documents/{documentId}` returns document metadata plus direct file URLs:
+
+```json
+{
+  "id": "labour/example-pdf",
+  "categoryId": "labour",
+  "title": "Example Labour Document",
+  "subtitle": "Employment and worker protections",
+  "year": "2024",
+  "pages": null,
+  "size": "1.2 MB",
+  "pdfUrl": "http://localhost:8000/law/documents/labour%2Fexample-pdf/download",
+  "fileUrl": "http://localhost:8000/law/documents/labour%2Fexample-pdf/download",
+  "downloadUrl": "http://localhost:8000/law/documents/labour%2Fexample-pdf/download",
+  "content": "This document is available for download: example.pdf"
+}
+```
+
+`GET /law/documents/{documentId}/download` supports URL-encoded IDs and returns PDFs with inline browser-friendly headers:
+
+```txt
+Content-Type: application/pdf
+Content-Disposition: inline
+Accept-Ranges: bytes
+```
 
 ## Expo App Usage
 

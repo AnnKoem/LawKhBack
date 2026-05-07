@@ -272,6 +272,7 @@ def _query_law_once(
             "verified": meta.get("verified", True),
             "corrected": meta.get("corrected", False),
             "quality": meta.get("quality", "unknown"),
+            "chunk_index": meta.get("chunk_index"),
             "score": 1 - results["distances"][0][i],
         }
         if doc_id not in seen_docs:

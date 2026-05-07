@@ -11,6 +11,8 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, Optional
+from urllib.parse import quote
+from urllib.parse import unquote
 
 from dotenv import load_dotenv
 
@@ -21,7 +23,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -41,6 +43,7 @@ from auth_store import (
 )
 from law_assets import (
     build_law_index,
+    find_document_for_source,
     get_document,
     get_document_path,
     list_categories,
@@ -152,6 +155,15 @@ class RagCitation(BaseModel):
     page: Optional[int] = None
     excerpt: Optional[str] = None
     score: Optional[float] = None
+    fileName: Optional[str] = None
+    sourceUrl: Optional[str] = None
+    pdfUrl: Optional[str] = None
+    downloadUrl: Optional[str] = None
+    pageStart: Optional[int] = None
+    pageEnd: Optional[int] = None
+    chunkId: Optional[str] = None
+    sectionTitle: Optional[str] = None
+    locationLabel: Optional[str] = None
 
 
 class RagChatResponse(BaseModel):
@@ -245,6 +257,9 @@ class LawDocument(BaseModel):
     year: str
     pages: Optional[int] = None
     size: Optional[str] = None
+    pdfUrl: Optional[str] = None
+    fileUrl: Optional[str] = None
+    downloadUrl: Optional[str] = None
 
 
 class LawDocumentDetail(LawDocument):
@@ -405,7 +420,11 @@ async def logout_endpoint():
 
 
 @app.post("/chat", response_model=RagChatResponse)
-async def chat_endpoint(req: RagChatRequest, authorization: Optional[str] = Header(default=None)):
+async def chat_endpoint(
+    req: RagChatRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
     filters = req.filters or RagFilters()
     chat_id = req.chatId or f"chat_{uuid.uuid4().hex[:12]}"
 
@@ -439,7 +458,7 @@ async def chat_endpoint(req: RagChatRequest, authorization: Optional[str] = Head
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Generation failed with provider '{DEFAULT_LLM_PROVIDER}': {exc}") from exc
 
-    citations = [_chunk_to_citation(chunk) for chunk in chunks]
+    citations = [_chunk_to_citation(chunk, request) for chunk in chunks]
     user = _auth_user_from_header(authorization)
     try:
         _store_chat_turn(chat_id, req.question, answer, citations, user_id=str(user["_id"]) if user else None)
@@ -449,8 +468,12 @@ async def chat_endpoint(req: RagChatRequest, authorization: Optional[str] = Head
 
 
 @app.post("/api/chat", response_model=RagChatResponse)
-async def api_chat_endpoint(req: RagChatRequest, authorization: Optional[str] = Header(default=None)):
-    return await chat_endpoint(req, authorization)
+async def api_chat_endpoint(
+    req: RagChatRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+):
+    return await chat_endpoint(req, request, authorization)
 
 
 @app.post("/api/query", response_model=QueryResponse)
@@ -554,8 +577,8 @@ async def law_categories_endpoint():
 
 
 @app.get("/law/categories/{category_id}/documents", response_model=list[LawDocument])
-async def law_category_documents_endpoint(category_id: str):
-    return [LawDocument(**doc) for doc in list_documents(category_id)]
+async def law_category_documents_endpoint(category_id: str, request: Request):
+    return [LawDocument(**_with_document_urls(doc, request)) for doc in list_documents(category_id)]
 
 
 @app.get("/law/documents/{document_id:path}/download")
@@ -563,15 +586,22 @@ async def law_document_download_endpoint(document_id: str):
     path = get_document_path(document_id)
     if not path:
         raise HTTPException(status_code=404, detail="Document not found")
-    return FileResponse(path, filename=path.name)
+    media_type = "application/pdf" if path.suffix.lower() == ".pdf" else None
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type=media_type,
+        content_disposition_type="inline",
+        headers={"Accept-Ranges": "bytes"},
+    )
 
 
 @app.get("/law/documents/{document_id:path}", response_model=LawDocumentDetail)
-async def law_document_endpoint(document_id: str):
+async def law_document_endpoint(document_id: str, request: Request):
     doc = get_document(document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    return LawDocumentDetail(**doc)
+    return LawDocumentDetail(**_with_document_urls(doc, request))
 
 
 @app.post("/admin/law-assets/prepare")
@@ -581,11 +611,11 @@ async def prepare_law_assets_endpoint():
     return {"ok": True, **prepared, "documentCount": len(index.get("documents", []))}
 
 
-@app.get("/citations/{citation_id}", response_model=CitationDetail)
-async def citation_detail_endpoint(citation_id: str):
-    citation = _CITATION_CACHE.get(citation_id)
+@app.get("/citations/{citation_id:path}", response_model=CitationDetail)
+async def citation_detail_endpoint(citation_id: str, request: Request):
+    citation = _find_citation_detail(citation_id, request)
     if not citation:
-        raise HTTPException(status_code=404, detail="Citation not found in current server memory")
+        raise HTTPException(status_code=404, detail="Citation not found")
     return citation
 
 
@@ -639,16 +669,20 @@ async def query_stream_endpoint(req: QueryRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-def _chunk_to_citation(chunk: dict) -> RagCitation:
+def _chunk_to_citation(chunk: dict, request: Request | None = None) -> RagCitation:
     source_file = chunk.get("source_file", "")
     doc_id = chunk.get("doc_id", "")
     source_category = chunk.get("category", "")
     category_id, category_title = CATEGORY_LABELS.get(source_category, (source_category, source_category))
-    title = _title_from_source(source_file or doc_id)
+    source_doc = find_document_for_source(category_id, source_file=source_file, doc_id=doc_id)
+    document_id = source_doc["id"] if source_doc else doc_id
+    title = source_doc["title"] if source_doc else _title_from_source(source_file or doc_id)
     citation_id = "cite_" + hashlib.sha1(
         f"{doc_id}|{chunk.get('score', 0)}|{chunk.get('text', '')[:80]}".encode("utf-8")
     ).hexdigest()[:12]
     excerpt = _clean_excerpt(chunk.get("text", ""))
+    download_url = _document_download_url(document_id, request) if source_doc and request else None
+    chunk_index = chunk.get("chunk_index") or chunk.get("chunkId") or chunk.get("id")
     full = f"{title}"
     if category_title:
         full += f" ({category_title})"
@@ -659,14 +693,145 @@ def _chunk_to_citation(chunk: dict) -> RagCitation:
         id=citation_id,
         title=title,
         fullCitation=full,
-        documentId=doc_id,
+        documentId=document_id,
         categoryId=category_id,
+        page=None,
         excerpt=excerpt,
         score=round(float(chunk.get("score", 0.0)), 4),
+        fileName=source_doc.get("relativePath") if source_doc else os.path.basename(source_file or doc_id),
+        sourceUrl=download_url,
+        pdfUrl=download_url if source_doc and source_doc.get("extension") == ".pdf" else None,
+        downloadUrl=download_url,
+        pageStart=None,
+        pageEnd=None,
+        chunkId=str(chunk_index) if chunk_index is not None else doc_id,
+        sectionTitle=None,
+        locationLabel=f"OCR chunk {chunk_index}" if chunk_index is not None else "OCR source location; exact PDF page unavailable",
         text=chunk.get("text", ""),
     )
     _CITATION_CACHE[citation_id] = detail
     return RagCitation(**detail.model_dump(exclude={"text"}))
+
+
+def _document_download_url(document_id: str, request: Request | None) -> str | None:
+    if not request or not document_id:
+        return None
+    base_url = str(request.base_url).rstrip("/")
+    return f"{base_url}/law/documents/{quote(document_id, safe='')}/download"
+
+
+def _find_citation_detail(identifier: str, request: Request | None = None) -> CitationDetail | None:
+    lookup = _normalize_lookup(identifier)
+    if not lookup:
+        return None
+
+    for citation in _CITATION_CACHE.values():
+        if _citation_matches(citation, lookup):
+            return _refresh_citation_urls(citation, request)
+
+    try:
+        docs = chats_collection().find(
+            {"messages.citations": {"$exists": True}},
+            {"messages.citations": 1},
+        ).sort("updatedAt", -1).limit(100)
+        for doc in docs:
+            for message in doc.get("messages", []):
+                for raw in message.get("citations", []):
+                    citation = CitationDetail(**raw)
+                    if _citation_matches(citation, lookup):
+                        return _refresh_citation_urls(citation, request)
+    except Exception as exc:
+        print(f"[citations] skipped persisted citation lookup: {exc}", file=sys.stderr)
+
+    source_doc = find_document_for_source("", source_file=identifier, doc_id=identifier)
+    if source_doc:
+        download_url = _document_download_url(source_doc["id"], request)
+        return CitationDetail(
+            id="cite_" + hashlib.sha1(source_doc["id"].encode("utf-8")).hexdigest()[:12],
+            title=source_doc["title"],
+            fullCitation=identifier,
+            documentId=source_doc["id"],
+            categoryId=source_doc["categoryId"],
+            page=None,
+            excerpt=None,
+            score=None,
+            fileName=source_doc.get("relativePath"),
+            sourceUrl=download_url,
+            pdfUrl=download_url if source_doc.get("extension") == ".pdf" else None,
+            downloadUrl=download_url,
+            pageStart=None,
+            pageEnd=None,
+            chunkId=None,
+            sectionTitle=None,
+            locationLabel="Exact cited OCR chunk unavailable; opening matched source document",
+            text=None,
+        )
+
+    return None
+
+
+def _citation_matches(citation: CitationDetail, lookup: str) -> bool:
+    fields = [
+        citation.id,
+        citation.title,
+        citation.fullCitation,
+        citation.documentId,
+        citation.fileName,
+    ]
+    return any(_normalize_lookup(value) == lookup for value in fields if value)
+
+
+def _refresh_citation_urls(citation: CitationDetail, request: Request | None) -> CitationDetail:
+    if not request:
+        return citation
+    data = citation.model_dump()
+    document_id = data.get("documentId")
+    remapped = False
+    if document_id and not get_document_path(document_id):
+        source_doc = find_document_for_source(
+            data.get("categoryId") or "",
+            source_file=data.get("fileName") or data.get("title") or data.get("fullCitation") or "",
+            doc_id=document_id,
+        )
+        if source_doc:
+            document_id = source_doc["id"]
+            data["documentId"] = document_id
+            data["categoryId"] = source_doc["categoryId"]
+            data["title"] = source_doc["title"]
+            data["fileName"] = source_doc.get("relativePath")
+            data["locationLabel"] = data.get("locationLabel") or "Exact cited OCR chunk unavailable; opening matched source document"
+            remapped = True
+    if not document_id:
+        return CitationDetail(**data)
+
+    download_url = _document_download_url(document_id, request)
+    if remapped:
+        data["sourceUrl"] = download_url
+        data["downloadUrl"] = download_url
+        data["pdfUrl"] = download_url
+    else:
+        data["sourceUrl"] = data.get("sourceUrl") or download_url
+        data["downloadUrl"] = data.get("downloadUrl") or download_url
+        data["pdfUrl"] = data.get("pdfUrl") or download_url
+    return CitationDetail(**data)
+
+
+def _normalize_lookup(value: str | None) -> str:
+    text = unquote(value or "").strip().lower()
+    text = text.removeprefix("citation detail").strip()
+    return " ".join(text.split())
+
+
+def _with_document_urls(doc: dict, request: Request) -> dict:
+    enriched = dict(doc)
+    download_url = _document_download_url(enriched["id"], request)
+    enriched["downloadUrl"] = download_url
+    enriched["fileUrl"] = download_url
+    if download_url and (enriched.get("id", "").endswith("-pdf") or ".pdf" in enriched.get("content", "").lower()):
+        enriched["pdfUrl"] = download_url
+    elif download_url:
+        enriched["pdfUrl"] = download_url
+    return enriched
 
 
 def _mongo_dt_to_iso(value) -> str:
